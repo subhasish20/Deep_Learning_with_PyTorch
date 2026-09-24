@@ -1637,6 +1637,785 @@ tensor.numpy()
 
 ---
 
+# Chapter 5 — Tensor Shapes, Dimensions and Broadcasting
+
+**Prerequisite:** Chapter 3 — Tensors, Chapter 4 — Tensor Operations
+
+---
+
+## 1. Overview
+
+- Understanding tensor rank (order), shape, and dimension semantics.
+- How PyTorch interprets dimensions: batch, channel, sequence, feature.
+- Broadcasting rules in detail: aligning shapes from the right, expanding size-1 dimensions.
+- Shape manipulation: `view`, `reshape`, `unsqueeze`, `squeeze`, `expand`, `repeat`, `permute`, `transpose`.
+- The difference between `expand` (no copy) and `repeat` (copies data).
+- Common shape errors: mismatched dimensions in operations, incorrect broadcasting, wrong dimension for reduction.
+- Using `torch.Size` and shape inspection for debugging.
+- Practical patterns: adding batch dimension, flattening features, reshaping for linear layers, broadcasting biases.
+
+---
+
+## 2. Core Concepts
+
+**Rank (Order):** The number of dimensions of a tensor. A scalar has rank 0, vector rank 1, matrix rank 2, etc.
+
+**Shape:** A tuple of integers giving the size of each dimension. E.g., `torch.Size([3, 4])`.
+
+**Dimension Index:** In PyTorch, dimensions are indexed from 0. For a 3D tensor, `dim=0` is the first dimension (often batch), `dim=1` is the second (often channels or sequence), `dim=2` is the third (often features).
+
+**Broadcasting:** A mechanism that allows operations on tensors of different shapes by automatically expanding size-1 dimensions to match the other tensor's shape, following NumPy rules.
+
+**Size-1 Dimension:** A dimension of length 1. It can be broadcast to any size.
+
+**Expand:** Returns a view of a tensor with size-1 dimensions expanded to a larger size. Does not copy data.
+
+**Repeat:** Repeats a tensor along specified dimensions. Copies data.
+
+**Unsqueeze:** Adds a new dimension of size 1 at a specified position.
+
+**Squeeze:** Removes dimensions of size 1.
+
+**View/Reshape:** Changes the shape of a tensor without changing its data. `view` requires contiguous memory; `reshape` may copy if needed.
+
+**Permute/Transpose:** Reorders dimensions, returning a non-contiguous view.
+
+**Contiguous:** A tensor whose memory layout matches its logical shape (row-major). Many operations require contiguous input.
+
+**Batch Dimension:** Typically the first dimension (`dim=0`), representing a batch of samples.
+
+**Feature Dimension:** Typically the last dimension, representing the number of features per sample.
+
+**Sequence Dimension:** In sequence models, often `dim=1` for sequence length.
+
+**Channel Dimension:** In image data, often `dim=1` for channels (e.g., RGB).
+
+---
+
+## 3. Important PyTorch APIs
+
+### `tensor.shape` / `tensor.size()`
+
+- **Purpose:** Returns the shape of the tensor as `torch.Size`.
+- **Syntax:** `tensor.shape` or `tensor.size()`
+- **Return:** `torch.Size` (a tuple-like object).
+- **Example:**
+```python
+x = torch.randn(2, 3, 4)
+print(x.shape)        # torch.Size([2, 3, 4])
+print(x.size(0))      # 2
+```
+
+### `tensor.dim()`
+
+- **Purpose:** Returns the number of dimensions (rank).
+- **Syntax:** `tensor.dim()`
+- **Return:** `int`.
+- **Example:**
+```python
+print(x.dim())        # 3
+```
+
+### `tensor.view(*shape)`
+
+- **Purpose:** Returns a new tensor with the same data but a different shape.
+- **Requirement:** Tensor must be contiguous.
+- **Syntax:** `tensor.view(*shape)`
+- **Parameters:** `*shape` — desired shape. Use `-1` to infer one dimension.
+- **Example:**
+```python
+x = torch.arange(12)
+y = x.view(3, 4)      # shape (3, 4)
+z = x.view(-1, 2)     # shape (6, 2)
+```
+
+### `tensor.reshape(*shape)`
+
+- **Purpose:** Similar to `view`, but works on non-contiguous tensors (may copy).
+- **Syntax:** `tensor.reshape(*shape)`
+- **Example:**
+```python
+x = torch.randn(2, 3, 4)
+y = x.permute(2, 0, 1)  # non-contiguous
+z = y.reshape(4, 6)     # works, may copy
+```
+
+### `torch.unsqueeze(input, dim)` / `tensor.unsqueeze(dim)`
+
+- **Purpose:** Adds a dimension of size 1 at the specified position.
+- **Syntax:** `torch.unsqueeze(input, dim)` or `tensor.unsqueeze(dim)`
+- **Parameters:** `dim` — position to insert the new dimension.
+- **Example:**
+```python
+x = torch.tensor([1, 2, 3])       # shape (3,)
+y = x.unsqueeze(0)                # shape (1, 3)
+z = x.unsqueeze(1)                # shape (3, 1)
+```
+
+### `torch.squeeze(input, dim=None)` / `tensor.squeeze(dim=None)`
+
+- **Purpose:** Removes dimensions of size 1.
+- **Syntax:** `torch.squeeze(input, dim=None)`
+- **Parameters:** `dim` — if given, removes only that dimension if it has size 1.
+- **Example:**
+```python
+x = torch.randn(1, 3, 1, 4)
+y = x.squeeze()                   # shape (3, 4)
+z = x.squeeze(0)                  # shape (3, 1, 4)
+```
+
+### `tensor.expand(*sizes)`
+
+- **Purpose:** Returns a view with size-1 dimensions expanded to larger sizes. Does not allocate new memory.
+- **Syntax:** `tensor.expand(*sizes)`
+- **Parameters:** `*sizes` — desired sizes. Use `-1` to keep original size.
+- **Example:**
+```python
+x = torch.tensor([[1], [2], [3]])  # shape (3, 1)
+y = x.expand(3, 4)                 # shape (3, 4), shares data
+```
+
+### `tensor.repeat(*sizes)`
+
+- **Purpose:** Repeats tensor along each dimension. Copies data.
+- **Syntax:** `tensor.repeat(*sizes)`
+- **Parameters:** `*sizes` — number of repetitions per dimension.
+- **Example:**
+```python
+x = torch.tensor([[1], [2], [3]])  # shape (3, 1)
+y = x.repeat(1, 4)                 # shape (3, 4), copies data
+```
+
+### `tensor.permute(*dims)`
+
+- **Purpose:** Reorders dimensions. Returns a non-contiguous view.
+- **Syntax:** `tensor.permute(*dims)`
+- **Parameters:** `*dims` — new order of dimensions.
+- **Example:**
+```python
+x = torch.randn(2, 3, 4)
+y = x.permute(2, 0, 1)            # shape (4, 2, 3)
+```
+
+### `tensor.transpose(dim0, dim1)`
+
+- **Purpose:** Swaps two dimensions. Returns a non-contiguous view.
+- **Syntax:** `tensor.transpose(dim0, dim1)`
+- **Example:**
+```python
+x = torch.randn(2, 3)
+y = x.transpose(0, 1)             # shape (3, 2)
+```
+
+### `torch.broadcast_tensors(*tensors)`
+
+- **Purpose:** Broadcasts a list of tensors to a common shape.
+- **Syntax:** `torch.broadcast_tensors(*tensors)`
+- **Return:** Tuple of broadcasted tensors.
+- **Example:**
+```python
+a = torch.tensor([1, 2, 3])
+b = torch.tensor([[10], [20]])
+a_b, b_b = torch.broadcast_tensors(a, b)
+print(a_b.shape)  # torch.Size([2, 3])
+print(b_b.shape)  # torch.Size([2, 3])
+```
+
+---
+
+## 4. Code Examples
+
+### Example 1: Inspecting Shape and Dimensions
+
+```python
+import torch
+
+x = torch.randn(2, 3, 4, 5)
+print("shape:", x.shape)
+print("dim:", x.dim())
+print("size(0):", x.size(0))
+print("size(1):", x.size(1))
+print("numel:", x.numel())  # total elements
+```
+
+**What it does:** Prints shape, rank, and individual dimension sizes.
+
+**Expected output:**
+```
+shape: torch.Size([2, 3, 4, 5])
+dim: 4
+size(0): 2
+size(1): 3
+numel: 120
+```
+
+### Example 2: View vs Reshape
+
+```python
+import torch
+
+x = torch.arange(12)
+print("x:", x)
+
+# view
+y = x.view(3, 4)
+print("view(3,4):\n", y)
+
+# view with -1
+z = x.view(-1, 2)
+print("view(-1,2):\n", z)
+
+# reshape on non-contiguous
+a = torch.randn(2, 3, 4)
+b = a.permute(2, 0, 1)  # non-contiguous
+c = b.reshape(4, 6)     # works, may copy
+print("reshape on non-contiguous:", c.shape)
+```
+
+**What it does:** Demonstrates `view` and `reshape`, including `-1` inference.
+
+**Important lines:** `view` requires contiguous; `reshape` handles non-contiguous.
+
+**Expected output:**
+```
+x: tensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11])
+view(3,4):
+ tensor([[ 0,  1,  2,  3],
+         [ 4,  5,  6,  7],
+         [ 8,  9, 10, 11]])
+view(-1,2):
+ tensor([[ 0,  1],
+         [ 2,  3],
+         [ 4,  5],
+         [ 6,  7],
+         [ 8,  9],
+         [10, 11]])
+reshape on non-contiguous: torch.Size([4, 6])
+```
+
+### Example 3: Unsqueeze and Squeeze
+
+```python
+import torch
+
+x = torch.tensor([1, 2, 3])
+print("x shape:", x.shape)
+
+# Add dimension at position 0
+y = x.unsqueeze(0)
+print("unsqueeze(0):", y.shape)  # (1, 3)
+
+# Add dimension at position 1
+z = x.unsqueeze(1)
+print("unsqueeze(1):", z.shape)  # (3, 1)
+
+# Squeeze
+a = torch.randn(1, 3, 1, 4)
+b = a.squeeze()
+print("squeeze all:", b.shape)   # (3, 4)
+c = a.squeeze(0)
+print("squeeze(0):", c.shape)    # (3, 1, 4)
+```
+
+**What it does:** Shows adding and removing size-1 dimensions.
+
+**Expected output:**
+```
+x shape: torch.Size([3])
+unsqueeze(0): torch.Size([1, 3])
+unsqueeze(1): torch.Size([3, 1])
+squeeze all: torch.Size([3, 4])
+squeeze(0): torch.Size([3, 1, 4])
+```
+
+### Example 4: Broadcasting Rules
+
+```python
+import torch
+
+# Scalar broadcasting
+a = torch.tensor([1, 2, 3])
+b = 10
+print(a + b)  # tensor([11, 12, 13])
+
+# Vector + Matrix
+x = torch.tensor([[1, 2, 3],
+                  [4, 5, 6]])  # (2, 3)
+y = torch.tensor([10, 20, 30]) # (3,)
+print(x + y)
+# tensor([[11, 22, 33],
+#         [14, 25, 36]])
+
+# Broadcasting with size-1 dimension
+p = torch.tensor([[1], [2], [3]])  # (3, 1)
+q = torch.tensor([10, 20, 30])     # (3,)
+print(p + q)
+# tensor([[11, 21, 31],
+#         [12, 22, 32],
+#         [13, 23, 33]])
+```
+
+**What it does:** Demonstrates broadcasting between different shapes.
+
+**Important lines:** Broadcasting aligns dimensions from the right, expands size-1 dims.
+
+**Expected output:** As commented.
+
+### Example 5: Expand vs Repeat
+
+```python
+import torch
+
+x = torch.tensor([[1], [2], [3]])  # shape (3, 1)
+print("x:\n", x)
+
+# Expand (no copy)
+y = x.expand(3, 4)
+print("expand(3,4):\n", y)
+
+# Repeat (copy)
+z = x.repeat(1, 4)
+print("repeat(1,4):\n", z)
+
+# Modify expand view
+y[0, 0] = 100
+print("x after modifying expand view:\n", x)
+```
+
+**What it does:** Shows `expand` shares data, `repeat` copies.
+
+**Important lines:** `expand` returns a view; modifying it modifies original. `repeat` creates independent copy.
+
+**Expected output:**
+```
+x:
+ tensor([[1],
+         [2],
+         [3]])
+expand(3,4):
+ tensor([[1, 1, 1, 1],
+         [2, 2, 2, 2],
+         [3, 3, 3, 3]])
+repeat(1,4):
+ tensor([[1, 1, 1, 1],
+         [2, 2, 2, 2],
+         [3, 3, 3, 3]])
+x after modifying expand view:
+ tensor([[100],
+         [  2],
+         [  3]])
+```
+
+### Example 6: Permute and Transpose
+
+```python
+import torch
+
+x = torch.randn(2, 3, 4)
+print("x shape:", x.shape)
+
+# Permute: reorder dimensions
+y = x.permute(2, 0, 1)
+print("permute(2,0,1):", y.shape)  # (4, 2, 3)
+
+# Transpose: swap two dimensions
+z = x.transpose(1, 2)
+print("transpose(1,2):", z.shape)  # (2, 4, 3)
+```
+
+**What it does:** Demonstrates reordering dimensions.
+
+**Important lines:** `permute` takes all dimensions; `transpose` swaps two.
+
+**Expected output:**
+```
+x shape: torch.Size([2, 3, 4])
+permute(2,0,1): torch.Size([4, 2, 3])
+transpose(1,2): torch.Size([2, 4, 3])
+```
+
+### Example 7: Broadcasting a Bias Vector
+
+```python
+import torch
+
+# Batch of 4 samples, 3 features
+X = torch.randn(4, 3)
+# Bias for each feature
+bias = torch.tensor([1.0, 2.0, 3.0])  # shape (3,)
+
+# Broadcasting bias across batch
+output = X + bias
+print("X shape:", X.shape)
+print("bias shape:", bias.shape)
+print("output shape:", output.shape)  # (4, 3)
+
+# Adding a column vector bias (per-sample bias)
+sample_bias = torch.tensor([[10.0], [20.0], [30.0], [40.0]])  # (4, 1)
+output2 = X + sample_bias
+print("output2 shape:", output2.shape)  # (4, 3)
+```
+
+**What it does:** Shows how broadcasting is used to add biases in neural networks.
+
+**Important lines:** Bias of shape `(features,)` broadcasts across batch. Sample bias of shape `(batch, 1)` broadcasts across features.
+
+---
+
+## 5. Important Parameters
+
+### `tensor.view(*shape)` / `tensor.reshape(*shape)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `*shape` | int... | Desired shape. Use `-1` to infer one dimension. |
+
+### `torch.unsqueeze(input, dim)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | Tensor | Input tensor. |
+| `dim` | int | Position to insert new dimension. Can be negative. |
+
+### `torch.squeeze(input, dim=None)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | Tensor | Input tensor. |
+| `dim` | int, optional | If given, squeeze only this dimension. |
+
+### `tensor.expand(*sizes)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `*sizes` | int... | Desired sizes. Use `-1` to keep original size. |
+
+### `tensor.repeat(*sizes)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `*sizes` | int... | Number of repetitions per dimension. |
+
+### `tensor.permute(*dims)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `*dims` | int... | New order of dimensions. |
+
+### `tensor.transpose(dim0, dim1)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `dim0` | int | First dimension to swap. |
+| `dim1` | int | Second dimension to swap. |
+
+---
+
+## 6. Internal Working
+
+### Broadcasting Rules (NumPy-compatible)
+
+1. If the number of dimensions of two tensors differs, prepend size-1 dimensions to the smaller shape until both have the same number of dimensions.
+2. For each dimension, the sizes must be equal, or one of them must be 1.
+3. Dimensions of size 1 are expanded to match the other tensor's size.
+
+**Example:** `(3, 1) + (4,)` → `(3, 1) + (1, 4)` → `(3, 4)`.
+
+Broadcasting is implemented by setting strides to 0 for expanded dimensions, so no actual data is copied.
+
+### Expand vs Repeat
+
+- **Expand:** Returns a view. The underlying data is not replicated. Strides for expanded dimensions are set to 0. Modifying the expanded tensor modifies the original.
+- **Repeat:** Physically copies data. The resulting tensor has its own storage.
+
+### View vs Reshape
+
+- **View:** Requires the tensor to be contiguous. It returns a new tensor object that shares the same storage with a new shape. It does not copy data.
+- **Reshape:** If the tensor is contiguous, it behaves like `view`. If not, it copies the data to make it contiguous and then returns a new tensor with the desired shape.
+
+### Permute and Transpose
+
+- These operations return non-contiguous views by changing the strides. They do not copy data.
+- To make them contiguous, call `.contiguous()`.
+
+### Shape Debugging
+
+- Always check `.shape` when encountering errors.
+- Use `print(tensor.shape)` or `assert` statements to verify shapes.
+- Common error messages: "The size of tensor a (X) must match the size of tensor b (Y) at non-singleton dimension Z".
+
+---
+
+## 7. Common Mistakes
+
+**Mistake:** Using `view` on a non-contiguous tensor.
+
+**Why it happens:** `view` requires contiguous memory layout.
+
+**Correct approach:** Use `reshape` or call `.contiguous()` before `view`.
+
+---
+
+**Mistake:** Confusing `expand` and `repeat`.
+
+**Why it happens:** Both can change shape, but `expand` shares data and `repeat` copies.
+
+**Correct approach:** Use `expand` for memory efficiency when you don't need to modify data independently. Use `repeat` when you need independent copies.
+
+---
+
+**Mistake:** Incorrect broadcasting leading to unexpected shapes.
+
+**Why it happens:** Not understanding that broadcasting aligns from the right.
+
+**Correct approach:** Explicitly use `unsqueeze` to add dimensions and check shapes with `torch.broadcast_tensors`.
+
+---
+
+**Mistake:** Forgetting that `squeeze` without `dim` removes all size-1 dimensions.
+
+**Why it happens:** This can change the rank unexpectedly.
+
+**Correct approach:** Specify `dim` to remove only the intended dimension.
+
+---
+
+**Mistake:** Using `transpose` or `permute` and then trying to `view`.
+
+**Why it happens:** These operations produce non-contiguous tensors.
+
+**Correct approach:** Call `.contiguous()` after `permute` or `transpose` before `view`.
+
+---
+
+**Mistake:** Adding a batch dimension incorrectly.
+
+**Why it happens:** Model expects input shape `(batch, features)`, but tensor is `(features,)`.
+
+**Correct approach:** Use `x.unsqueeze(0)` to add batch dimension.
+
+---
+
+**Mistake:** Flattening all dimensions including batch.
+
+**Why it happens:** Using `view(-1)` accidentally flattens batch dimension too.
+
+**Correct approach:** Use `x.view(x.size(0), -1)` to keep batch dimension.
+
+---
+
+**Mistake:** Broadcasting a bias of shape `(features,)` to `(batch, features)` but expecting per-sample bias.
+
+**Why it happens:** Bias shape `(features,)` broadcasts across batch, not per sample.
+
+**Correct approach:** For per-sample bias, use shape `(batch, 1)`.
+
+---
+
+**Mistake:** Not understanding negative dimension indices.
+
+**Why it happens:** PyTorch supports negative indexing for `dim` parameters (e.g., `dim=-1` for last dimension).
+
+**Correct approach:** Use negative indices for convenience, but be aware of the actual dimension.
+
+---
+
+**Mistake:** Assuming `torch.Size` is a tuple and trying to modify it.
+
+**Why it happens:** `torch.Size` is immutable.
+
+**Correct approach:** Convert to list if modification is needed: `list(x.shape)`.
+
+---
+
+## 8. Important Differences
+
+| Concept | Difference |
+|---------|-----------|
+| `view` vs `reshape` | `view` requires contiguous; `reshape` may copy. |
+| `expand` vs `repeat` | `expand` shares data; `repeat` copies data. |
+| `unsqueeze` vs `expand` | `unsqueeze` adds a new dimension of size 1; `expand` expands existing size-1 dimensions. |
+| `squeeze` vs `unsqueeze` | `squeeze` removes size-1 dimensions; `unsqueeze` adds them. |
+| `permute` vs `transpose` | `permute` reorders all dimensions; `transpose` swaps two. |
+| `contiguous` vs `non-contiguous` | Contiguous has row-major strides; non-contiguous may have different strides. |
+| `shape` vs `size()` | `shape` is an attribute; `size()` is a method. Both return `torch.Size`. |
+| `dim` vs `axis` | PyTorch uses `dim`; NumPy uses `axis`. They mean the same. |
+| Broadcasting vs explicit expansion | Broadcasting is implicit; explicit expansion uses `expand` or `repeat`. |
+
+---
+
+## 9. Important Rules / Facts
+
+- Broadcasting aligns dimensions from the right and expands size-1 dimensions.
+- `view` requires contiguous memory; `reshape` works on non-contiguous but may copy.
+- `expand` returns a view; `repeat` copies data.
+- `unsqueeze` adds a dimension of size 1; `squeeze` removes size-1 dimensions.
+- `permute` and `transpose` return non-contiguous tensors.
+- Use `.contiguous()` to make a tensor contiguous after `permute`/`transpose`.
+- The batch dimension is typically `dim=0`.
+- The feature dimension is typically the last dimension.
+- `torch.Size` is immutable; convert to list if needed.
+- Negative dimension indices are supported: `-1` is the last dimension.
+- Broadcasting is memory-efficient because it uses stride 0 for expanded dimensions.
+- Common shape errors can be debugged by printing shapes and using `assert`.
+- Adding a batch dimension: `x.unsqueeze(0)`.
+- Flattening features while keeping batch: `x.view(x.size(0), -1)`.
+- Broadcasting a bias vector `(features,)` adds it to each sample in the batch.
+- Broadcasting a per-sample bias `(batch, 1)` adds it to each feature.
+
+---
+
+## 10. Practical Example
+
+### Implementing a Simple Linear Layer with Broadcasting
+
+```python
+import torch
+
+# Batch of 5 samples, 3 input features
+X = torch.randn(5, 3)
+
+# Weight matrix: 3 input features -> 2 output features
+W = torch.randn(3, 2)
+# Bias: 2 output features
+b = torch.randn(2)
+
+# Linear transformation: y = X @ W + b
+# X: (5, 3), W: (3, 2) -> (5, 2)
+# b: (2,) broadcasts to (5, 2)
+y = X @ W + b
+print("X shape:", X.shape)
+print("W shape:", W.shape)
+print("b shape:", b.shape)
+print("y shape:", y.shape)  # (5, 2)
+
+# Equivalent using nn.Linear
+import torch.nn as nn
+linear = nn.Linear(3, 2)
+# Set weights manually for comparison
+with torch.no_grad():
+    linear.weight.copy_(W.T)  # nn.Linear stores weight as (out, in)
+    linear.bias.copy_(b)
+y2 = linear(X)
+print("y2 shape:", y2.shape)  # (5, 2)
+
+# Check closeness
+print("Max difference:", (y - y2).abs().max().item())
+```
+
+**What it does:**
+- Implements a linear layer manually using matrix multiplication and broadcasting.
+- Compares with `nn.Linear`.
+- Demonstrates how bias broadcasting works.
+
+**Important lines:**
+- `X @ W` gives shape `(5, 2)`.
+- `+ b` broadcasts `b` from `(2,)` to `(5, 2)`.
+- `nn.Linear` stores weight as `(out_features, in_features)`, so we transpose.
+
+**Expected output:**
+```
+X shape: torch.Size([5, 3])
+W shape: torch.Size([3, 2])
+b shape: torch.Size([2])
+y shape: torch.Size([5, 2])
+y2 shape: torch.Size([5, 2])
+Max difference: ~0.0
+```
+
+### Reshaping for a Convolutional Layer
+
+```python
+import torch
+
+# Image batch: (batch, channels, height, width)
+images = torch.randn(8, 3, 32, 32)
+
+# Flatten for a linear layer: (batch, channels * height * width)
+flattened = images.view(images.size(0), -1)
+print("Flattened shape:", flattened.shape)  # (8, 3072)
+
+# Add a dimension for a single-channel image
+single_channel = flattened.unsqueeze(1)
+print("Unsqueezed shape:", single_channel.shape)  # (8, 1, 3072)
+
+# Permute for sequence model: (batch, sequence, features)
+seq = torch.randn(8, 10, 16)  # (batch, seq_len, features)
+seq_permuted = seq.permute(0, 2, 1)  # (batch, features, seq_len)
+print("Permuted shape:", seq_permuted.shape)  # (8, 16, 10)
+```
+
+**What it does:**
+- Flattens image data for a linear layer.
+- Adds a channel dimension.
+- Reorders dimensions for sequence models.
+
+**Important lines:**
+- `view(images.size(0), -1)` keeps batch dimension and flattens the rest.
+- `unsqueeze(1)` adds a channel dimension.
+- `permute` reorders dimensions.
+
+---
+
+## 11. Chapter Summary
+
+- Tensor shape and rank are fundamental to understanding PyTorch operations.
+- Broadcasting allows operations on tensors of different shapes by expanding size-1 dimensions.
+- `view` and `reshape` change shape; `view` requires contiguous memory.
+- `unsqueeze` and `squeeze` add/remove size-1 dimensions.
+- `expand` returns a view without copying; `repeat` copies data.
+- `permute` and `transpose` reorder dimensions, returning non-contiguous tensors.
+- Use `.contiguous()` after `permute`/`transpose` before `view`.
+- Batch dimension is typically `dim=0`; feature dimension is often the last.
+- Broadcasting aligns dimensions from the right.
+- Common mistakes include using `view` on non-contiguous tensors, confusing `expand` and `repeat`, and incorrect broadcasting.
+- Debugging shape errors involves printing shapes and using `torch.broadcast_tensors`.
+- Understanding shapes is essential for building and debugging neural networks.
+
+---
+
+## 12. Important APIs to Remember
+
+| API | Purpose |
+|-----|---------|
+| `tensor.shape` | Get shape |
+| `tensor.size(dim)` | Get size of a dimension |
+| `tensor.dim()` | Get rank |
+| `tensor.view(*shape)` | Reshape (contiguous) |
+| `tensor.reshape(*shape)` | Reshape (may copy) |
+| `torch.unsqueeze(input, dim)` | Add size-1 dimension |
+| `torch.squeeze(input, dim)` | Remove size-1 dimension |
+| `tensor.expand(*sizes)` | Expand size-1 dimensions (view) |
+| `tensor.repeat(*sizes)` | Repeat tensor (copy) |
+| `tensor.permute(*dims)` | Reorder dimensions |
+| `tensor.transpose(d0, d1)` | Swap two dimensions |
+| `tensor.contiguous()` | Make contiguous |
+| `torch.broadcast_tensors(*tensors)` | Broadcast tensors to common shape |
+| `tensor.numel()` | Total number of elements |
+| `tensor.flatten(start_dim, end_dim)` | Flatten dimensions |
+
+---
+
+## 13. Key Takeaways
+
+1. Tensor shape is a tuple of dimension sizes; rank is the number of dimensions.
+2. Broadcasting aligns dimensions from the right and expands size-1 dimensions.
+3. `view` requires contiguous memory; `reshape` works on non-contiguous but may copy.
+4. `expand` returns a view without copying; `repeat` copies data.
+5. `unsqueeze` adds a size-1 dimension; `squeeze` removes size-1 dimensions.
+6. `permute` and `transpose` return non-contiguous tensors; use `.contiguous()` if needed.
+7. The batch dimension is typically `dim=0`.
+8. Negative dimension indices are supported (e.g., `-1` for last dimension).
+9. Broadcasting is memory-efficient (stride 0 for expanded dimensions).
+10. Common shape errors: mismatched dimensions, incorrect broadcasting, using `view` on non-contiguous.
+11. Debug shapes by printing `.shape` and using assertions.
+12. Adding a batch dimension: `x.unsqueeze(0)`.
+13. Flattening features while keeping batch: `x.view(x.size(0), -1)`.
+14. Bias broadcasting: `(features,)` adds to each sample; `(batch, 1)` adds to each feature.
+15. Mastering shapes and broadcasting is essential for building neural networks.
+
+
+
 ## 28. WHAT TO LEARN NEXT
 
 After mastering tensors, follow this roadmap:
