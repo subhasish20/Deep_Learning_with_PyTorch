@@ -1637,10 +1637,7 @@ tensor.numpy()
 
 ---
 
-# Chapter 5 — Tensor Shapes, Dimensions and Broadcasting
-
-**Prerequisite:** Chapter 3 — Tensors, Chapter 4 — Tensor Operations
-
+#  Tensor Shapes, Dimensions and Broadcasting
 ---
 
 ## 1. Overview
